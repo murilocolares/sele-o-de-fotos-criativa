@@ -439,6 +439,154 @@ Return your response strictly in JSON format according to this exact schema:
   }
 });
 
+// API: Perform Face Recognition on locally uploaded photos
+app.post("/api/local/organize", async (req, res) => {
+  const { profiles, files } = req.body;
+
+  if (!profiles || !Array.isArray(profiles) || profiles.length === 0) {
+    return res.status(200).json({ success: false, error: "Crie pelo menos um perfil de referência antes de organizar." });
+  }
+  if (!files || !Array.isArray(files) || files.length === 0) {
+    return res.status(200).json({ success: false, error: "Faça o upload de pelo menos uma foto para analisar." });
+  }
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(200).json({ success: false, error: "API Key do Gemini não configurada no servidor. Configure nos Secrets do painel lateral." });
+  }
+
+  try {
+    const results = [];
+
+    // Loop through each image and analyze
+    for (const file of files) {
+      try {
+        let base64Image = file.base64Data;
+        if (!base64Image) {
+          throw new Error("Dados da imagem ausentes ou inválidos.");
+        }
+        if (base64Image.includes("base64,")) {
+          base64Image = base64Image.split("base64,")[1];
+        }
+
+        // Format parts array for Gemini content api
+        const parts: any[] = [
+          {
+            inlineData: {
+              mimeType: file.mimeType || "image/jpeg",
+              data: base64Image,
+            },
+          },
+          { text: "Target Image: This is the photo to be classified." },
+        ];
+
+        // Append references to parts
+        profiles.forEach((profile: any) => {
+          let cleanBase64 = profile.photoBase64;
+          if (cleanBase64.includes("base64,")) {
+            cleanBase64 = cleanBase64.split("base64,")[1];
+          }
+
+          parts.push({
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: cleanBase64,
+            },
+          });
+          parts.push({
+            text: `Reference Photo for person '${profile.name}' (ID: '${profile.id}')`,
+          });
+        });
+
+        // Add matching prompt instructions
+        parts.push({
+          text: `You are an accurate face comparison assistant. Compare the 'Target Image' with each of the 'Reference Photos' provided.
+Identify if any of the people from the 'Reference Photos' are clearly present in the 'Target Image'.
+You must pay close attention to facial features (eyes, nose, mouth, shape, structure) and ignore backgrounds, clothing, lighting, and expressions.
+Be conservative: only match if you are highly confident (confidence score >= 0.70).
+
+Return your response strictly in JSON format according to this exact schema:
+{
+  "match": {
+    "profileId": "ID of the matched reference profile, or null if no match",
+    "profileName": "Name of the matched person, or null if no match",
+    "confidence": 0.95 // Number between 0.0 and 1.0 indicating your confidence
+  }
+}`,
+        });
+
+        // Run Gemini 3.5 Flash Model with automatic retry for 503/429
+        const geminiRes = await generateContentWithRetry(ai, {
+          model: "gemini-3.5-flash",
+          contents: { parts },
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                match: {
+                  type: Type.OBJECT,
+                  properties: {
+                    profileId: { type: Type.STRING, description: "ID of the matched reference profile, or null" },
+                    profileName: { type: Type.STRING, description: "Name of the matched person, or null" },
+                    confidence: { type: Type.NUMBER, description: "Confidence score between 0.0 and 1.0" },
+                  },
+                  required: ["profileId", "profileName", "confidence"],
+                },
+              },
+              required: ["match"],
+            },
+          },
+        });
+
+        const geminiText = geminiRes.text;
+        if (!geminiText) {
+          throw new Error("Resposta do Gemini vazia");
+        }
+
+        const parseResult = JSON.parse(geminiText.trim());
+        const matchInfo = parseResult.match;
+
+        let finalResult: any = {
+          fileId: file.id,
+          fileName: file.name,
+          matchedProfileId: null,
+          matchedProfileName: null,
+          confidence: 0,
+          status: "unmatched",
+        };
+
+        if (matchInfo && matchInfo.profileId && matchInfo.confidence >= 0.7) {
+          finalResult.matchedProfileId = matchInfo.profileId;
+          finalResult.matchedProfileName = matchInfo.profileName;
+          finalResult.confidence = matchInfo.confidence;
+          finalResult.status = "matched";
+        }
+
+        results.push(finalResult);
+      } catch (fileError: any) {
+        console.error(`Error analyzing file ${file.name}:`, fileError);
+        results.push({
+          fileId: file.id,
+          fileName: file.name,
+          matchedProfileId: null,
+          matchedProfileName: null,
+          confidence: 0,
+          status: "error",
+          error: fileError.message,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: "Organização finalizada com sucesso.",
+      results,
+    });
+  } catch (error: any) {
+    console.error("Local organize exception:", error);
+    res.status(200).json({ success: false, error: "Ocorreu um erro ao processar a organização facial das fotos locais.", details: error.message });
+  }
+});
+
 // Serve frontend assets in production and Vite middleware in development
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {

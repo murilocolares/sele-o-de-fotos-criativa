@@ -1,6 +1,6 @@
 {
   "name": "Organizador Facial de Fotos do Google Drive",
-  "description": "Reconhecimento facial inteligente para fotos do Google Drive, organizando-as automaticamente em álbuns por pessoa.",
+  "description": "Organizador inteligente por reconhecimento facial. Classifique fotos enviadas diretamente por upload local (sem conta Google) ou organize álbuns automaticamente na sua conta do Google Drive com a IA do Gemini.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -1,13 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { LogIn, LogOut, User, Sparkles, FolderOpen, Smile, RefreshCw, Layers } from 'lucide-react';
+import { LogIn, LogOut, User, Sparkles, FolderOpen, Smile, RefreshCw, Layers, UploadCloud } from 'lucide-react';
 import { initAuth, googleSignIn, logout } from './auth';
 import { Profile, DriveFolder, DriveFile, ProcessLog } from './types';
 import ProfileCreator from './components/ProfileCreator';
 import DriveConfig from './components/DriveConfig';
 import FolderOrganizer from './components/FolderOrganizer';
 import GalleryView from './components/GalleryView';
+import LocalUpload from './components/LocalUpload';
 
 export default function App() {
+  // Mode state
+  const [mode, setMode] = useState<'local' | 'drive'>('local');
+
   // Auth state
   const [user, setUser] = useState<any>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -191,25 +195,42 @@ export default function App() {
 
   // Execute facial recognition & Drive organization
   const handleStartOrganization = async (options: { limit: number | string; autoOrganizeInDrive: boolean }) => {
-    if (!connectedFolder || !accessToken) return;
+    if (mode === 'drive' && (!connectedFolder || !accessToken)) return;
+    if (mode === 'local' && files.length === 0) return;
+
     setIsProcessing(true);
     setLogs([]); // Clear logs for clean display
     setMatchStats({}); // Reset statistics
 
     addLog('Iniciando processamento com Inteligência Artificial...', 'info');
-    addLog(`Parâmetros: Limite de ${options.limit} arquivos | Organização física: ${options.autoOrganizeInDrive ? 'Sim' : 'Não'}`, 'info');
+    if (mode === 'drive') {
+      addLog(`Parâmetros: Limite de ${options.limit} arquivos | Organização física: ${options.autoOrganizeInDrive ? 'Sim' : 'Não'}`, 'info');
+    } else {
+      addLog(`Parâmetros: Modo Upload Direto | Analisando ${files.length} fotos carregadas`, 'info');
+    }
 
     try {
-      const res = await fetch('/api/drive/organize', {
+      const endpoint = mode === 'drive' ? '/api/drive/organize' : '/api/local/organize';
+      const payload = mode === 'drive' ? {
+        folderId: connectedFolder?.id,
+        accessToken,
+        profiles,
+        limit: options.limit,
+        autoOrganizeInDrive: options.autoOrganizeInDrive
+      } : {
+        profiles,
+        files: files.map(f => ({
+          id: f.id,
+          name: f.name,
+          mimeType: f.mimeType,
+          base64Data: (f as any).base64Data
+        }))
+      };
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          folderId: connectedFolder.id,
-          accessToken,
-          profiles,
-          limit: options.limit,
-          autoOrganizeInDrive: options.autoOrganizeInDrive
-        })
+        body: JSON.stringify(payload)
       });
 
       let errorMsg = 'Ocorreu um erro ao processar a organização.';
@@ -238,7 +259,7 @@ export default function App() {
                 };
               }
 
-              const moveMsg = options.autoOrganizeInDrive ? ` e movida para o álbum "Álbum - ${name}"` : '';
+              const moveMsg = (mode === 'drive' && options.autoOrganizeInDrive) ? ` e movida para o álbum "Álbum - ${name}"` : '';
               addLog(`Foto "${r.fileName}" correspondida com ${name} (${Math.round(r.confidence * 100)}% de confiança)${moveMsg}.`, 'success');
             } else if (r.status === 'unmatched') {
               if (fileIdx !== -1) {
@@ -257,7 +278,7 @@ export default function App() {
 
           setFiles(updatedFiles);
           setMatchStats(stats);
-          addLog(`Organização Facial concluída com sucesso! Total de fotos analisadas: ${results.length}.`, 'success');
+          addLog(`Análise Facial concluída com sucesso! Total de fotos analisadas: ${results.length}.`, 'success');
           return;
         } else {
           errorMsg = data.error || errorMsg;
@@ -367,7 +388,9 @@ export default function App() {
               Organize suas fotos por rosto automaticamente
             </h2>
             <p className="text-slate-500 text-xs sm:text-sm max-w-xl font-medium">
-              Conecte uma pasta do Google Drive, cadastre as selfies de referência das pessoas, e deixe a inteligência artificial do Gemini encontrar e separar as fotos de cada um física e visualmente.
+              {mode === 'local' 
+                ? "Cadastre as selfies de referência das pessoas, envie um lote de fotos locais por upload direto, e deixe a inteligência artificial do Gemini identificar e separar as fotos de cada um instantaneamente."
+                : "Conecte uma pasta do Google Drive, cadastre as selfies de referência das pessoas, e deixe a inteligência artificial do Gemini encontrar e separar as fotos de cada um física e visualmente."}
             </p>
           </div>
           <div className="flex gap-4 items-center bg-slate-50 border border-slate-200 px-5 py-4 rounded-2xl shrink-0">
@@ -380,6 +403,46 @@ export default function App() {
               <span className="block text-2xl font-black text-blue-600">{files.length}</span>
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Fotos</span>
             </div>
+          </div>
+        </div>
+
+        {/* Mode Switcher */}
+        <div className="flex justify-center sm:justify-start">
+          <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200/60 shadow-inner">
+            <button
+              onClick={() => {
+                setMode('local');
+                setFiles([]);
+                setLogs([]);
+                setMatchStats({});
+                addLog('Modo de Upload Direto ativo. Não necessita de conta Google.', 'info');
+              }}
+              className={`px-5 py-2.5 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-2 ${
+                mode === 'local'
+                  ? 'bg-white text-blue-600 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <UploadCloud className="w-4 h-4" />
+              Upload Direto (Sem Conta Google)
+            </button>
+            <button
+              onClick={() => {
+                setMode('drive');
+                setFiles([]);
+                setLogs([]);
+                setMatchStats({});
+                addLog('Modo Google Drive ativo. Requer login com sua conta Google.', 'info');
+              }}
+              className={`px-5 py-2.5 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-2 ${
+                mode === 'drive'
+                  ? 'bg-white text-blue-600 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <FolderOpen className="w-4 h-4" />
+              Google Drive (Com Login)
+            </button>
           </div>
         </div>
 
@@ -397,13 +460,33 @@ export default function App() {
 
           {/* Column 2: Drive Link & Execution */}
           <div className="lg:col-span-2 flex flex-col gap-8">
-            <DriveConfig
-              accessToken={accessToken}
-              onConnectFolder={handleConnectFolder}
-              connectedFolder={connectedFolder}
-              isLoading={isConnectingFolder}
-              error={folderError}
-            />
+            {mode === 'drive' ? (
+              <DriveConfig
+                accessToken={accessToken}
+                onConnectFolder={handleConnectFolder}
+                connectedFolder={connectedFolder}
+                isLoading={isConnectingFolder}
+                error={folderError}
+              />
+            ) : (
+              <LocalUpload
+                files={files}
+                onAddFiles={(newFiles) => {
+                  setFiles(prev => [...prev, ...newFiles]);
+                  addLog(`Carregadas mais ${newFiles.length} fotos na fila local.`, 'success');
+                }}
+                onRemoveFile={(id) => {
+                  const filename = files.find(f => f.id === id)?.name || 'foto';
+                  setFiles(prev => prev.filter(f => f.id !== id));
+                  addLog(`Foto "${filename}" removida da fila.`, 'info');
+                }}
+                onClearAll={() => {
+                  setFiles([]);
+                  addLog('Fila de fotos local limpa.', 'info');
+                }}
+                isProcessing={isProcessing}
+              />
+            )}
 
             <FolderOrganizer
               connectedFolder={connectedFolder}
@@ -412,6 +495,8 @@ export default function App() {
               onStartOrganization={handleStartOrganization}
               isProcessing={isProcessing}
               matchStats={matchStats}
+              mode={mode}
+              localFilesCount={files.length}
             />
           </div>
         </div>
@@ -421,6 +506,7 @@ export default function App() {
           profiles={profiles}
           files={files}
           user={user}
+          mode={mode}
         />
       </main>
 
