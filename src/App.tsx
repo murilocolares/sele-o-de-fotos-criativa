@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LogIn, LogOut, User, Sparkles, FolderOpen, Smile, RefreshCw, Layers, UploadCloud } from 'lucide-react';
+import { LogIn, LogOut, User, Sparkles, FolderOpen, Smile, RefreshCw, Layers, UploadCloud, AlertTriangle, ExternalLink } from 'lucide-react';
 import { initAuth, googleSignIn, logout } from './auth';
 import { Profile, DriveFolder, DriveFile, ProcessLog } from './types';
 import ProfileCreator from './components/ProfileCreator';
@@ -16,6 +16,8 @@ export default function App() {
   const [user, setUser] = useState<any>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isInIframe, setIsInIframe] = useState(false);
 
   // App States
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -43,6 +45,7 @@ export default function App() {
 
   // Load registered reference profiles on mount
   useEffect(() => {
+    setIsInIframe(window.self !== window.top);
     const stored = localStorage.getItem('drive_face_profiles');
     if (stored) {
       try {
@@ -60,6 +63,7 @@ export default function App() {
       (authUser, token) => {
         setUser(authUser);
         setAccessToken(token);
+        setAuthError(null);
         addLog(`Autenticado com sucesso como ${authUser.displayName || authUser.email}.`, 'success');
       },
       () => {
@@ -73,6 +77,7 @@ export default function App() {
   // Login handler
   const handleLogin = async () => {
     setIsLoggingIn(true);
+    setAuthError(null);
     try {
       const result = await googleSignIn();
       if (result) {
@@ -82,7 +87,16 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      addLog(`Erro ao autenticar: ${err.message}`, 'error');
+      let errorMsg = err.message || 'Erro de autenticação';
+      if (err.code === 'auth/unauthorized-domain' || errorMsg.includes('unauthorized-domain')) {
+        errorMsg = 'Este domínio de pré-visualização não está autorizado no Firebase Auth por padrão. Para fazer login com sucesso, abra este aplicativo em uma NOVA ABA do seu navegador!';
+      } else if (err.code === 'auth/popup-blocked' || errorMsg.includes('popup-blocked')) {
+        errorMsg = 'O pop-up de login foi bloqueado pelo seu navegador. Ative os pop-ups para este site.';
+      } else if (err.code === 'auth/iframe-secure-context-required' || errorMsg.includes('iframe')) {
+        errorMsg = 'Não é possível fazer login dentro de um iframe do AI Studio. Por favor, abra o aplicativo em uma NOVA ABA para autenticar!';
+      }
+      setAuthError(errorMsg);
+      addLog(`Erro ao autenticar: ${errorMsg}`, 'error');
     } finally {
       setIsLoggingIn(false);
     }
@@ -97,6 +111,7 @@ export default function App() {
       setConnectedFolder(null);
       setFiles([]);
       setMatchStats({});
+      setAuthError(null);
       addLog('Sessão encerrada com sucesso.', 'info');
     } catch (err: any) {
       console.error(err);
@@ -381,6 +396,53 @@ export default function App() {
 
       {/* Main Container Content */}
       <main className="grow max-w-7xl mx-auto w-full px-6 py-8 flex flex-col gap-8">
+        {/* Auth Error or Iframe Alert */}
+        {authError && (
+          <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-fadeIn" id="auth-error-alert">
+            <div className="flex gap-3 items-start sm:items-center">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-red-600 animate-pulse" />
+              <div>
+                <p className="font-bold text-sm">Falha na Conexão com a Conta Google</p>
+                <p className="text-xs text-red-700 mt-0.5">{authError}</p>
+              </div>
+            </div>
+            {isInIframe && (
+              <button
+                onClick={() => {
+                  window.open(window.location.href, '_blank');
+                }}
+                className="shrink-0 px-4 py-2 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Abrir em Nova Aba
+              </button>
+            )}
+          </div>
+        )}
+
+        {isInIframe && !user && !authError && mode === 'drive' && (
+          <div className="p-4 bg-blue-50 border border-blue-200 text-blue-800 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-fadeIn" id="iframe-tip-alert">
+            <div className="flex gap-3 items-start sm:items-center">
+              <Sparkles className="w-5 h-5 shrink-0 text-blue-600" />
+              <div>
+                <p className="font-bold text-sm">Dica para Google Drive</p>
+                <p className="text-xs text-blue-700 mt-0.5">
+                  Para conectar sua conta Google e acessar o Google Drive com segurança, abra o app em uma nova aba do navegador para evitar bloqueios de segurança do painel do AI Studio.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                window.open(window.location.href, '_blank');
+              }}
+              className="shrink-0 px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Abrir em Nova Aba
+            </button>
+          </div>
+        )}
+
         {/* Welcome Section */}
         <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-xs relative overflow-hidden">
           <div className="space-y-2 relative z-10 text-center sm:text-left">
